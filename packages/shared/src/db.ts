@@ -23,4 +23,3 @@ export async function closeDb(): Promise<void> {
 }
 
 export { schema };
-export * from '@pwa/db/schema';
