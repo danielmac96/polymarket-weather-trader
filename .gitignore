@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+/tmp/app.log
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# drizzle
+drizzle/.migrations.json

@@ -1,0 +1,13 @@
+{
+  "name": "polymarket-weather-app",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "npm install -g pnpm && pnpm install && docker compose -f infra/docker/docker-compose.yml up -d postgres && sleep 3 && pnpm db:migrate && pnpm db:seed",
+  "postStartCommand": "nohup pnpm dev:all > /tmp/app.log 2>&1 &",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Dashboard", "onAutoForward": "notify", "visibility": "public" }
+  }
+}

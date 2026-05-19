@@ -1,0 +1,30 @@
+{
+  "name": "polymarket-weather-app",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev:all": "concurrently -k -n web,collect,live,analyze,port 'pnpm --filter web dev' 'pnpm --filter collector start' 'pnpm --filter live-feed start' 'pnpm --filter analyzer start' 'pnpm --filter portfolio start'",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @pwa/db migrate",
+    "db:seed": "pnpm --filter @pwa/db seed",
+    "db:generate": "pnpm --filter @pwa/db generate",
+    "db:studio": "pnpm --filter @pwa/db studio"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "concurrently": "^9.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  }
+}
