@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@9.12.0",
   "scripts": {
-    "dev:all": "concurrently -k -n web,collect,live,analyze,port 'pnpm --filter web dev' 'pnpm --filter collector start' 'pnpm --filter live-feed start' 'pnpm --filter analyzer start' 'pnpm --filter portfolio start'",
+    "dev:all": "concurrently -k -n web,collect,live,analyze,port 'pnpm --filter @pwa/web dev' 'pnpm --filter @pwa/collector start' 'pnpm --filter @pwa/live-feed start' 'pnpm --filter @pwa/analyzer start' 'pnpm --filter @pwa/portfolio start'",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
