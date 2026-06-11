@@ -31,8 +31,14 @@ describe('loadConfig', () => {
     expect(cfg.EDGE_THRESHOLD).toBe(0.05);
     expect(cfg.AUTO_PAPER_TRADE).toBe(true);
     expect(cfg.LIVE_TRADING_ENABLED).toBe(false);
-    expect(cfg.MAX_PAPER_POSITION_USD).toBe(50);
+    expect(cfg.MAX_PAPER_POSITION_USD).toBe(100);
     expect(cfg.PAPER_STARTING_BANKROLL_USD).toBe(1000);
+    expect(cfg.FOCUS_ENABLED).toBe(true);
+    expect(cfg.FOCUS_QUERY).toBe('highest temperature');
+    expect(cfg.FOCUS_LOCATION).toBe('NYC');
+    expect(cfg.KELLY_FRACTION).toBe(0.25);
+    expect(cfg.MAX_POSITION_PCT).toBe(0.1);
+    expect(cfg.MAX_TOTAL_EXPOSURE_PCT).toBe(0.6);
   });
 
   it('coerces numeric strings', () => {

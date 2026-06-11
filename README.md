@@ -4,6 +4,27 @@
 
 Live US weather markets from Polymarket with model-vs-market edge detection and paper trading. MVP scope: WebSocket-fed prices (sub-5s), automated paper-trade execution on edge signals, live PnL/portfolio tracking. **Paper trading only — `LIVE_TRADING_ENABLED=false` is permanent for this MVP.**
 
+## Current strategy: one highest-temp market
+
+The system runs in **focus mode** by default: it tracks only the daily **"Highest temperature in NYC"** market — one Polymarket event made of mutually exclusive temperature buckets (`84°F or below`, `85°F`, `86-87°F`, `88°F or higher`, …).
+
+How it trades:
+
+1. **Forecast** — NOAA and Open-Meteo daily-max temperature forecasts for the target day are collected continuously (`daily_forecasts` table).
+2. **Model** — the daily high is modeled as Normal(provider consensus, σ), with σ widening for provider disagreement and lead time, and a ±0.5°F correction because buckets resolve on rounded whole degrees. Each bucket gets a model probability.
+3. **Edge** — model probability vs live market price (WebSocket midpoint). Beyond `EDGE_THRESHOLD` (default 5%) with adequate volume, liquidity, and confidence, the decision is TRADE.
+4. **Size for growth** — fractional Kelly (default quarter-Kelly) on current equity, capped at 10% per position and 60% total open exposure. Winners compound the bankroll; sizing scales automatically as equity grows.
+
+The dashboard's top panel shows the focused market's full bucket ladder: market price vs model probability vs edge, plus the provider forecasts feeding it. Configure with `FOCUS_*`, `KELLY_*` env vars (see `.env.example`). `FOCUS_ENABLED=false` reverts to tracking all US weather markets.
+
+## Troubleshooting
+
+```bash
+pnpm doctor
+```
+
+Checks every pipeline stage in dependency order (DB → migrations → collector → discovery → prices → analyzer → portfolio) and prints a fix hint at the first broken stage. See [docs/RUNBOOK.md](./docs/RUNBOOK.md) for deeper digging.
+
 ## Stack
 
 - pnpm workspaces, Node 20 LTS, TypeScript 5 strict
@@ -75,6 +96,7 @@ scripts/update.sh
 | Script                 | Purpose                                          |
 | ---------------------- | ------------------------------------------------ |
 | `pnpm dev:all`         | Start web + collector + live-feed + analyzer + portfolio |
+| `pnpm doctor`          | Check every pipeline stage, print fix hints      |
 | `pnpm build`           | Build all packages                               |
 | `pnpm typecheck`       | TypeScript across all packages                   |
 | `pnpm lint`            | ESLint                                           |

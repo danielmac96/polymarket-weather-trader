@@ -65,3 +65,27 @@ export function isUsLocation(question: string): boolean {
 export function isUsWeatherMarket(question: string): boolean {
   return isWeatherQuestion(question) && isUsLocation(question);
 }
+
+// Common shorthand → all the ways the place appears in market questions.
+const LOCATION_ALIASES: Record<string, RegExp> = {
+  nyc: /\bnyc\b|\bnew york\b/i,
+  la: /\bla\b|\blos angeles\b/i,
+  chicago: /\bchicago\b/i,
+  miami: /\bmiami\b/i,
+};
+
+/**
+ * Focus mode: match only markets in one family, e.g. FOCUS_QUERY="highest
+ * temperature" + FOCUS_LOCATION="NYC" matches every bucket of the daily
+ * "Highest temperature in NYC on <date>?" market and nothing else.
+ */
+export function matchesFocus(
+  question: string,
+  focusQuery: string,
+  focusLocation: string,
+): boolean {
+  if (!question.toLowerCase().includes(focusQuery.toLowerCase())) return false;
+  const alias = LOCATION_ALIASES[focusLocation.trim().toLowerCase()];
+  if (alias) return alias.test(question);
+  return question.toLowerCase().includes(focusLocation.trim().toLowerCase());
+}

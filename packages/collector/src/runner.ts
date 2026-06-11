@@ -2,6 +2,7 @@ import {
   createLogger,
   getDb,
   schema,
+  type DailyHighForecast,
   type Forecast,
   type Location,
   type WeatherProvider,
@@ -39,10 +40,27 @@ async function fetchOne(
   }
 }
 
+async function fetchDailyHighsOne(
+  provider: WeatherProvider,
+  location: Location,
+): Promise<DailyHighForecast[]> {
+  if (!provider.fetchDailyHighs) return [];
+  try {
+    return await provider.fetchDailyHighs(location);
+  } catch (err) {
+    log.warn(
+      { err: String(err), provider: provider.name, location: location.name },
+      'daily-high fetch failed',
+    );
+    return [];
+  }
+}
+
 export interface RunResult {
   attempted: number;
   inserted: number;
   failures: number;
+  dailyHighsInserted: number;
 }
 
 export async function runCollectionOnce(): Promise<RunResult> {
@@ -88,10 +106,34 @@ export async function runCollectionOnce(): Promise<RunResult> {
     );
   }
 
+  // Daily-max temperature forecasts (model input for highest-temp markets).
+  const dailyTasks: Array<Promise<DailyHighForecast[]>> = [];
+  for (const loc of locations) {
+    for (const provider of providersFor(loc.region)) {
+      dailyTasks.push(fetchDailyHighsOne(provider, loc));
+    }
+  }
+  const dailyHighs = (await Promise.all(dailyTasks)).flat();
+  if (dailyHighs.length > 0) {
+    const db = getDb();
+    await db.insert(schema.dailyForecasts).values(
+      dailyHighs.map((d) => ({
+        locationId: d.locationId,
+        provider: d.provider,
+        forecastedAt: d.forecastedAt,
+        targetDate: d.targetDate,
+        tempMaxC: d.tempMaxC,
+        tempMaxF: d.tempMaxF,
+        payload: d.payload,
+      })),
+    );
+  }
+
   const result: RunResult = {
     attempted: tasks.length,
     inserted: forecasts.length,
     failures,
+    dailyHighsInserted: dailyHighs.length,
   };
   log.info({ ...result, durationMs: Date.now() - startedAt }, 'collection complete');
   return result;

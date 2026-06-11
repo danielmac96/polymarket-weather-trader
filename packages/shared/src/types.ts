@@ -9,6 +9,7 @@ export type Region = (typeof Region)[keyof typeof Region];
 export const WeatherCondition = {
   TEMPERATURE_ABOVE: 'TEMPERATURE_ABOVE',
   TEMPERATURE_BELOW: 'TEMPERATURE_BELOW',
+  TEMPERATURE_RANGE: 'TEMPERATURE_RANGE',
   PRECIPITATION: 'PRECIPITATION',
   SNOW: 'SNOW',
   WIND: 'WIND',
@@ -80,6 +81,23 @@ export interface Forecast {
   precipProb: number | null;
   windKph: number | null;
   weatherCode: string | null;
+  payload: unknown;
+}
+
+/**
+ * A provider's forecast of the daily maximum temperature for one calendar day
+ * (in the location's local timezone). This is the model input for Polymarket
+ * "highest temperature" markets — distinct from `Forecast`, which captures
+ * current-hour conditions.
+ */
+export interface DailyHighForecast {
+  locationId: string;
+  provider: string;
+  forecastedAt: Date;
+  /** Local calendar date the max applies to, as YYYY-MM-DD. */
+  targetDate: string;
+  tempMaxC: number;
+  tempMaxF: number;
   payload: unknown;
 }
 

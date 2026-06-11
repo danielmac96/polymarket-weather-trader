@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   createLogger,
   fetchJson,
+  type DailyHighForecast,
   type Forecast,
   type Location,
   type WeatherProvider,
@@ -37,6 +38,14 @@ const OpenMeteoResponse = z.object({
 function cToF(c: number): number {
   return (c * 9) / 5 + 32;
 }
+
+const OpenMeteoDailyResponse = z.object({
+  daily: z.object({
+    time: z.array(z.string()),
+    temperature_2m_max: z.array(z.number().nullable()),
+  }),
+  timezone: z.string().optional(),
+});
 
 export const openMeteoProvider: WeatherProvider = {
   name: 'open-meteo',
@@ -89,5 +98,39 @@ export const openMeteoProvider: WeatherProvider = {
       weatherCode: typeof code === 'number' ? String(code) : null,
       payload: data,
     };
+  },
+
+  async fetchDailyHighs(location: Location): Promise<DailyHighForecast[]> {
+    if (!location.id) throw new Error('open-meteo.fetchDailyHighs requires location.id');
+    // timezone=auto so each daily max covers the location's local calendar
+    // day — Polymarket highest-temp markets resolve on local days.
+    const url =
+      `https://api.open-meteo.com/v1/forecast` +
+      `?latitude=${location.lat}` +
+      `&longitude=${location.lng}` +
+      `&daily=temperature_2m_max` +
+      `&temperature_unit=celsius` +
+      `&timezone=auto` +
+      `&forecast_days=4`;
+
+    log.debug({ url, location: location.name }, 'open-meteo: fetching daily highs');
+    const data = await fetchJson(url, OpenMeteoDailyResponse);
+    const now = new Date();
+
+    const out: DailyHighForecast[] = [];
+    data.daily.time.forEach((date, i) => {
+      const maxC = data.daily.temperature_2m_max[i];
+      if (maxC === null || maxC === undefined) return;
+      out.push({
+        locationId: location.id as string,
+        provider: this.name,
+        forecastedAt: now,
+        targetDate: date,
+        tempMaxC: maxC,
+        tempMaxF: cToF(maxC),
+        payload: { timezone: data.timezone ?? null },
+      });
+    });
+    return out;
   },
 };

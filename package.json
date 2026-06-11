@@ -13,6 +13,7 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "doctor": "pnpm --filter @pwa/db doctor",
     "db:migrate": "pnpm --filter @pwa/db migrate",
     "db:seed": "pnpm --filter @pwa/db seed",
     "db:generate": "pnpm --filter @pwa/db generate",

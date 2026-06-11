@@ -1,14 +1,31 @@
 import type { Forecast, ThresholdUnit, WeatherCondition } from '@pwa/shared';
 
+export interface ProviderObservation {
+  provider: string;
+  value: number;
+}
+
 export interface EdgeInput {
   marketId: string;
   question: string;
   condition: WeatherCondition;
   threshold: number;
+  /** Upper bound for TEMPERATURE_RANGE buckets (same unit as threshold). */
+  thresholdHigh?: number | null;
   thresholdUnit: ThresholdUnit;
   endDate: Date;
   impliedProb: number;
   forecasts: Forecast[];
+  /** True for "highest temperature" markets — resolve on the daily max. */
+  isDailyHigh?: boolean;
+  /**
+   * Daily-max temperature forecasts (°C, one per provider) for the market's
+   * target date. When present, temperature conditions are evaluated against
+   * the daily high instead of current-hour temps.
+   */
+  dailyHighsC?: ProviderObservation[];
+  /** Whole days between now and the target date (0 = resolves today). */
+  leadDays?: number;
 }
 
 export interface EdgeResult {
@@ -51,11 +68,6 @@ function unitToMm(value: number, unit: ThresholdUnit): number | null {
   return null;
 }
 
-interface ProviderObservation {
-  provider: string;
-  value: number;
-}
-
 function gatherTemps(forecasts: Forecast[]): ProviderObservation[] {
   return forecasts
     .filter((f) => f.tempC !== null)
@@ -87,6 +99,63 @@ function confidenceFromStdev(stdev: number, naturalSigma: number): number {
 
 const PRECIP_PROB_MEANS_PRECIPITATION = 0.5; // sanity fallback
 
+const TEMP_CONDITIONS = new Set<WeatherCondition>([
+  'TEMPERATURE_ABOVE',
+  'TEMPERATURE_BELOW',
+  'TEMPERATURE_RANGE',
+]);
+
+/**
+ * Probability model for daily highest-temperature buckets.
+ *
+ * Tmax ~ Normal(mean of provider daily-max forecasts, sigma), where sigma is
+ * the larger of provider disagreement and an irreducible forecast error that
+ * grows with lead time (~0.9°C same-day, +0.45°C per day out).
+ *
+ * Buckets resolve on the rounded integer station reading, so each bound gets
+ * a ±0.5° continuity correction in the question's unit:
+ *   "≥ T"    → P(Tmax > T − 0.5)
+ *   "≤ T"    → P(Tmax < T + 0.5)
+ *   "[a, b]" → P(a − 0.5 < Tmax < b + 0.5)
+ */
+function dailyHighModel(input: EdgeInput, reasoning: Record<string, unknown>): {
+  modelProb: number;
+  confidence: number;
+} {
+  const obs = input.dailyHighsC as ProviderObservation[];
+  const { mean, stdev } = meanStdev(obs);
+  const leadDays = Math.max(0, input.leadDays ?? 0);
+  const naturalSigma = 0.9 + 0.45 * leadDays;
+  const sigma = Math.max(stdev, naturalSigma);
+
+  const half = 0.5; // in the question's unit (buckets are integer-degree)
+  const toC = (v: number): number =>
+    input.thresholdUnit === 'F' ? ((v - 32) * 5) / 9 : v;
+
+  let modelProb: number;
+  if (input.condition === 'TEMPERATURE_ABOVE') {
+    modelProb = 1 - normalCdf(toC(input.threshold - half), mean, sigma);
+  } else if (input.condition === 'TEMPERATURE_BELOW') {
+    modelProb = normalCdf(toC(input.threshold + half), mean, sigma);
+  } else {
+    const high = input.thresholdHigh ?? input.threshold;
+    modelProb =
+      normalCdf(toC(high + half), mean, sigma) -
+      normalCdf(toC(input.threshold - half), mean, sigma);
+  }
+
+  // Provider agreement drives confidence; a single provider is capped so it
+  // can never look certain.
+  const agreement = confidenceFromStdev(stdev, naturalSigma);
+  const countFactor = Math.min(1, 0.6 + 0.2 * obs.length);
+  const confidence = agreement * countFactor;
+
+  reasoning.model = 'daily-high-normal';
+  reasoning.observations = obs;
+  reasoning.modelInputs = { mean, stdev, sigma, leadDays, naturalSigma };
+  return { modelProb, confidence };
+}
+
 export function computeEdge(input: EdgeInput): EdgeResult {
   const reasoning: Record<string, unknown> = {
     condition: input.condition,
@@ -99,7 +168,20 @@ export function computeEdge(input: EdgeInput): EdgeResult {
   let modelProb = 0.5;
   let confidence = 0;
 
-  if (input.condition === 'TEMPERATURE_ABOVE' || input.condition === 'TEMPERATURE_BELOW') {
+  const isDailyHigh = input.isDailyHigh === true || input.condition === 'TEMPERATURE_RANGE';
+  if (TEMP_CONDITIONS.has(input.condition) && isDailyHigh) {
+    if (input.dailyHighsC && input.dailyHighsC.length > 0) {
+      const r = dailyHighModel(input, reasoning);
+      modelProb = r.modelProb;
+      confidence = r.confidence;
+    } else {
+      // A daily-high market without daily-max forecasts: current-hour temps
+      // are the wrong input, so defer to the market with zero confidence.
+      reasoning.note = 'daily-high market but no daily-max forecasts yet';
+      modelProb = input.impliedProb;
+      confidence = 0;
+    }
+  } else if (input.condition === 'TEMPERATURE_ABOVE' || input.condition === 'TEMPERATURE_BELOW') {
     const thresholdC = unitToCelsius(input.threshold, input.thresholdUnit);
     if (thresholdC === null) {
       reasoning.note = 'threshold unit not temperature-compatible';

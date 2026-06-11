@@ -1,6 +1,6 @@
 import StatsBar from '@/components/StatsBar';
 import TradeButtons from '@/components/TradeButtons';
-import { getDashboardMarkets } from '@/lib/queries';
+import { getDashboardMarkets, getFocusData, type FocusData } from '@/lib/queries';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 5;
@@ -22,11 +22,59 @@ function edgeColor(edge: number | null): string {
   return 'text-zinc-400';
 }
 
+function FocusPanel({ focus }: { focus: FocusData }) {
+  return (
+    <section className="border-b border-zinc-800">
+      <h2 className="px-3 pt-3 text-xs uppercase tracking-wide text-zinc-500">
+        focus · highest temp {focus.locationName ? `· ${focus.locationName}` : ''} ·{' '}
+        {focus.targetDate}
+      </h2>
+      <div className="px-3 py-2 text-xs text-zinc-400">
+        {focus.forecasts.length === 0 ? (
+          <span>No daily-max forecasts yet — waiting on collector.</span>
+        ) : (
+          <span>
+            Forecast high:{' '}
+            {focus.forecasts
+              .map((f) => `${f.provider} ${f.tempMaxF.toFixed(0)}°F`)
+              .join(' · ')}
+          </span>
+        )}
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-[10px] uppercase text-zinc-500">
+            <th className="px-3 py-1 font-normal">Bucket</th>
+            <th className="py-1 font-normal">Market</th>
+            <th className="py-1 font-normal">Model</th>
+            <th className="py-1 font-normal">Edge</th>
+            <th className="py-1 pr-3 font-normal">Call</th>
+          </tr>
+        </thead>
+        <tbody>
+          {focus.buckets.map((b) => (
+            <tr key={b.rowId} className="border-t border-zinc-800/60">
+              <td className="px-3 py-1.5">{b.label}</td>
+              <td className="py-1.5">{fmtPct(b.midpointYes)}</td>
+              <td className="py-1.5">{fmtPct(b.modelProb)}</td>
+              <td className={`py-1.5 ${edgeColor(b.edge)}`}>
+                {b.edge === null ? '—' : `${(b.edge * 100).toFixed(1)}%`}
+              </td>
+              <td className="py-1.5 pr-3 text-zinc-500">{b.decision ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 export default async function DashboardPage() {
-  const markets = await getDashboardMarkets();
+  const [markets, focus] = await Promise.all([getDashboardMarkets(), getFocusData()]);
   return (
     <div>
       <StatsBar />
+      {focus ? <FocusPanel focus={focus} /> : null}
       <h2 className="px-3 py-2 text-xs uppercase tracking-wide text-zinc-500">
         active markets ({markets.length})
       </h2>

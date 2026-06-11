@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  date,
   doublePrecision,
   index,
   integer,
@@ -17,6 +18,7 @@ export const regionEnum = pgEnum('region', ['US', 'UK', 'AU', 'CA']);
 export const weatherConditionEnum = pgEnum('weather_condition', [
   'TEMPERATURE_ABOVE',
   'TEMPERATURE_BELOW',
+  'TEMPERATURE_RANGE',
   'PRECIPITATION',
   'SNOW',
   'WIND',
@@ -95,6 +97,33 @@ export const weatherForecasts = pgTable(
   }),
 );
 
+export const dailyForecasts = pgTable(
+  'daily_forecasts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    locationId: uuid('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    forecastedAt: timestamp('forecasted_at', { withTimezone: true }).notNull(),
+    targetDate: date('target_date').notNull(),
+    tempMaxC: doublePrecision('temp_max_c').notNull(),
+    tempMaxF: doublePrecision('temp_max_f').notNull(),
+    payload: jsonb('payload'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    locationDateProviderIdx: index('daily_forecasts_loc_date_provider_idx').on(
+      t.locationId,
+      t.targetDate,
+      t.provider,
+      t.forecastedAt.desc(),
+    ),
+  }),
+);
+
 export const polymarketMarkets = pgTable(
   'polymarket_markets',
   {
@@ -110,7 +139,13 @@ export const polymarketMarkets = pgTable(
     }),
     parsedCondition: weatherConditionEnum('parsed_condition'),
     parsedThreshold: doublePrecision('parsed_threshold'),
+    // Upper bound for TEMPERATURE_RANGE buckets (e.g. "85-86°F"). For exact
+    // single-degree buckets, parsedThreshold === parsedThresholdHigh.
+    parsedThresholdHigh: doublePrecision('parsed_threshold_high'),
     parsedThresholdUnit: thresholdUnitEnum('parsed_threshold_unit'),
+    // Local calendar date the market resolves on (YYYY-MM-DD), parsed from the
+    // question (e.g. "Highest temperature in NYC on June 11?").
+    parsedTargetDate: date('parsed_target_date'),
     status: marketStatusEnum('status').notNull().default('ACTIVE'),
     resolvedOutcome: marketSideEnum('resolved_outcome'),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),

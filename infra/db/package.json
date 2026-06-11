@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "tsx src/migrate.ts",
     "seed": "tsx src/seed.ts",
+    "doctor": "tsx src/doctor.ts",
     "generate": "drizzle-kit generate",
     "studio": "drizzle-kit studio"
   },
