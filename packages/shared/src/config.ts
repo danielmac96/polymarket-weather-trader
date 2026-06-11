@@ -28,8 +28,19 @@ const schema = z.object({
   MIN_MARKET_VOLUME_USD: numberString.default('500'),
   MIN_MARKET_LIQUIDITY_USD: numberString.default('200'),
 
+  // Focus mode: restrict discovery/analysis to a single market family.
+  // Default is the most liquid weather market: highest temperature in NYC.
+  FOCUS_ENABLED: booleanString.default('true'),
+  FOCUS_QUERY: z.string().default('highest temperature'),
+  FOCUS_LOCATION: z.string().default('NYC'),
+
   PAPER_STARTING_BANKROLL_USD: numberString.default('1000'),
-  MAX_PAPER_POSITION_USD: numberString.default('50'),
+  MAX_PAPER_POSITION_USD: numberString.default('100'),
+
+  // Growth sizing: fractional Kelly with per-position and total-exposure caps.
+  KELLY_FRACTION: numberString.default('0.25'),
+  MAX_POSITION_PCT: numberString.default('0.10'),
+  MAX_TOTAL_EXPOSURE_PCT: numberString.default('0.60'),
 
   AUTO_PAPER_TRADE: booleanString.default('true'),
   LIVE_TRADING_ENABLED: booleanString.default('false'),

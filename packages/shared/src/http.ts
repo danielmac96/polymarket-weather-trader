@@ -78,7 +78,7 @@ export async function fetchJson<T>(
       let parsedJson: unknown;
       try {
         parsedJson = JSON.parse(text);
-      } catch (e) {
+      } catch {
         log.error({ url, preview: text.slice(0, 500) }, 'invalid json');
         throw new Error(`Invalid JSON from ${url}`);
       }

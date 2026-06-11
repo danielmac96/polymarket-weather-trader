@@ -3,6 +3,7 @@ import {
   createLogger,
   fetchJson,
   loadConfig,
+  type DailyHighForecast,
   type Forecast,
   type Location,
   type WeatherProvider,
@@ -37,6 +38,22 @@ const HourlyForecastResponse = z.object({
   properties: z.object({
     generatedAt: z.string(),
     periods: z.array(ForecastPeriod).min(1),
+  }),
+});
+
+// 12-hour forecast periods: daytime periods carry the day's high temperature.
+const HalfDayPeriod = z.object({
+  startTime: z.string(),
+  isDaytime: z.boolean(),
+  temperature: z.number(),
+  temperatureUnit: z.enum(['F', 'C']),
+  shortForecast: z.string().optional(),
+});
+
+const HalfDayForecastResponse = z.object({
+  properties: z.object({
+    generatedAt: z.string(),
+    periods: z.array(HalfDayPeriod).min(1),
   }),
 });
 
@@ -94,5 +111,40 @@ export const noaaProvider: WeatherProvider = {
       weatherCode: first.shortForecast ?? null,
       payload: { points: points.properties, period: first },
     };
+  },
+
+  async fetchDailyHighs(location: Location): Promise<DailyHighForecast[]> {
+    if (!location.id) throw new Error('noaa.fetchDailyHighs requires location.id');
+    const cfg = loadConfig();
+    const headers = { 'User-Agent': cfg.NOAA_USER_AGENT };
+
+    const lat = location.lat.toFixed(4);
+    const lng = location.lng.toFixed(4);
+    const pointsUrl = `https://api.weather.gov/points/${lat},${lng}`;
+    const points = await fetchJson(pointsUrl, PointsResponse, { headers });
+
+    const forecast = await fetchJson(points.properties.forecast, HalfDayForecastResponse, {
+      headers,
+    });
+
+    const forecastedAt = new Date(forecast.properties.generatedAt);
+    const out: DailyHighForecast[] = [];
+    for (const p of forecast.properties.periods) {
+      if (!p.isDaytime) continue;
+      // startTime is local ISO with offset (e.g. 2026-06-11T06:00:00-04:00);
+      // the date portion is the local calendar day.
+      const targetDate = p.startTime.slice(0, 10);
+      const tempF = p.temperatureUnit === 'F' ? p.temperature : cToF(p.temperature);
+      out.push({
+        locationId: location.id,
+        provider: this.name,
+        forecastedAt,
+        targetDate,
+        tempMaxC: fToC(tempF),
+        tempMaxF: tempF,
+        payload: { shortForecast: p.shortForecast ?? null },
+      });
+    }
+    return out;
   },
 };

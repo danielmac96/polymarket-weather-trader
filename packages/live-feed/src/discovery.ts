@@ -4,9 +4,10 @@ import {
   createLogger,
   fetchJson,
   getDb,
+  loadConfig,
   schema,
 } from '@pwa/shared';
-import { isUsWeatherMarket } from './filters.js';
+import { isUsWeatherMarket, matchesFocus } from './filters.js';
 
 const log = createLogger('discovery');
 
@@ -55,14 +56,20 @@ function parseEndDate(m: z.infer<typeof GammaMarket>): Date | null {
 }
 
 export async function fetchActiveMarkets(): Promise<DiscoveredMarket[]> {
+  const cfg = loadConfig();
   const url =
     'https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500';
   const data = await fetchJson(url, GammaResponse);
   log.info({ count: data.length }, 'gamma returned markets');
 
+  const accept = (question: string): boolean =>
+    cfg.FOCUS_ENABLED
+      ? matchesFocus(question, cfg.FOCUS_QUERY, cfg.FOCUS_LOCATION)
+      : isUsWeatherMarket(question);
+
   const filtered: DiscoveredMarket[] = [];
   for (const m of data) {
-    if (!isUsWeatherMarket(m.question)) continue;
+    if (!accept(m.question)) continue;
     const tokens = normalizeClobTokenIds(m.clobTokenIds);
     const [yes, no] = tokens;
     filtered.push({
@@ -73,7 +80,12 @@ export async function fetchActiveMarkets(): Promise<DiscoveredMarket[]> {
       clobTokenIdNo: no ?? null,
     });
   }
-  log.info({ matched: filtered.length, total: data.length }, 'filtered to US weather');
+  log.info(
+    { matched: filtered.length, total: data.length, focus: cfg.FOCUS_ENABLED },
+    cfg.FOCUS_ENABLED
+      ? `filtered to focus: ${cfg.FOCUS_QUERY} @ ${cfg.FOCUS_LOCATION}`
+      : 'filtered to US weather',
+  );
   return filtered;
 }
 

@@ -9,7 +9,12 @@ import {
   type ThresholdUnit,
 } from '@pwa/shared';
 import { usParser } from './parsers/usParser.js';
-import { computeEdge, type EdgeResult } from './edge.js';
+import {
+  isHighestTempQuestion,
+  parseHighestTempBucket,
+  parseTargetDate,
+} from './parsers/highestTemp.js';
+import { computeEdge, type ProviderObservation } from './edge.js';
 import { decide } from './decide.js';
 import { maybeAutoTrade } from './paperTrader.js';
 
@@ -23,7 +28,9 @@ interface MarketRow {
   parsedLocationId: string | null;
   parsedCondition: WeatherCondition | null;
   parsedThreshold: number | null;
+  parsedThresholdHigh: number | null;
   parsedThresholdUnit: ThresholdUnit | null;
+  parsedTargetDate: string | null;
 }
 
 async function fetchActiveMarkets(): Promise<MarketRow[]> {
@@ -37,7 +44,9 @@ async function fetchActiveMarkets(): Promise<MarketRow[]> {
       parsedLocationId: schema.polymarketMarkets.parsedLocationId,
       parsedCondition: schema.polymarketMarkets.parsedCondition,
       parsedThreshold: schema.polymarketMarkets.parsedThreshold,
+      parsedThresholdHigh: schema.polymarketMarkets.parsedThresholdHigh,
       parsedThresholdUnit: schema.polymarketMarkets.parsedThresholdUnit,
+      parsedTargetDate: schema.polymarketMarkets.parsedTargetDate,
     })
     .from(schema.polymarketMarkets)
     .where(eq(schema.polymarketMarkets.status, 'ACTIVE'));
@@ -45,13 +54,42 @@ async function fetchActiveMarkets(): Promise<MarketRow[]> {
 }
 
 async function backfillParse(row: MarketRow): Promise<MarketRow> {
-  if (row.parsedLocationId && row.parsedCondition && row.parsedThreshold !== null) {
+  // Re-parse highest-temp markets missing a target date — they may have been
+  // parsed by the generic parser before bucket support existed.
+  const needsHighestTempReparse =
+    isHighestTempQuestion(row.question) && row.parsedTargetDate === null;
+  if (
+    row.parsedLocationId &&
+    row.parsedCondition &&
+    row.parsedThreshold !== null &&
+    !needsHighestTempReparse
+  ) {
     return row;
   }
   const db = getDb();
   const location = usParser.extractLocation(row.question);
-  const condition = usParser.extractCondition(row.question);
-  const threshold = usParser.extractThreshold(row.question);
+
+  // Highest-temperature bucket markets get the dedicated parser; everything
+  // else goes through the generic condition/threshold extraction.
+  const bucket = parseHighestTempBucket(row.question);
+  let condition: WeatherCondition | null;
+  let threshold: number | null;
+  let thresholdHigh: number | null = null;
+  let thresholdUnit: ThresholdUnit | null;
+  if (bucket) {
+    condition = bucket.condition;
+    threshold = bucket.threshold;
+    thresholdHigh = bucket.thresholdHigh;
+    thresholdUnit = bucket.unit;
+  } else {
+    condition = usParser.extractCondition(row.question);
+    const t = usParser.extractThreshold(row.question);
+    threshold = t?.value ?? null;
+    thresholdUnit = t?.unit ?? null;
+  }
+  const targetDate = isHighestTempQuestion(row.question)
+    ? parseTargetDate(row.question, row.endDate)
+    : null;
 
   let locationId: string | null = row.parsedLocationId;
   if (location && !locationId) {
@@ -74,8 +112,10 @@ async function backfillParse(row: MarketRow): Promise<MarketRow> {
     .set({
       parsedLocationId: locationId,
       parsedCondition: condition,
-      parsedThreshold: threshold?.value ?? null,
-      parsedThresholdUnit: threshold?.unit ?? null,
+      parsedThreshold: threshold,
+      parsedThresholdHigh: thresholdHigh,
+      parsedThresholdUnit: thresholdUnit,
+      parsedTargetDate: targetDate,
       updatedAt: new Date(),
     })
     .where(eq(schema.polymarketMarkets.id, row.id));
@@ -84,8 +124,10 @@ async function backfillParse(row: MarketRow): Promise<MarketRow> {
     ...row,
     parsedLocationId: locationId,
     parsedCondition: condition,
-    parsedThreshold: threshold?.value ?? null,
-    parsedThresholdUnit: threshold?.unit ?? null,
+    parsedThreshold: threshold,
+    parsedThresholdHigh: thresholdHigh,
+    parsedThresholdUnit: thresholdUnit,
+    parsedTargetDate: targetDate,
   };
 }
 
@@ -159,6 +201,41 @@ async function recentForecasts(locationId: string): Promise<Forecast[]> {
   }));
 }
 
+/** Latest daily-max forecast per provider for a location + target date. */
+async function recentDailyHighs(
+  locationId: string,
+  targetDate: string,
+): Promise<ProviderObservation[]> {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      provider: schema.dailyForecasts.provider,
+      tempMaxC: schema.dailyForecasts.tempMaxC,
+      forecastedAt: schema.dailyForecasts.forecastedAt,
+    })
+    .from(schema.dailyForecasts)
+    .where(
+      and(
+        eq(schema.dailyForecasts.locationId, locationId),
+        eq(schema.dailyForecasts.targetDate, targetDate),
+        gte(schema.dailyForecasts.forecastedAt, cutoff),
+      ),
+    )
+    .orderBy(desc(schema.dailyForecasts.forecastedAt));
+
+  const latestByProvider = new Map<string, number>();
+  for (const r of rows) {
+    if (!latestByProvider.has(r.provider)) latestByProvider.set(r.provider, r.tempMaxC);
+  }
+  return Array.from(latestByProvider, ([provider, value]) => ({ provider, value }));
+}
+
+function leadDaysUntil(targetDate: string, now: Date): number {
+  const target = new Date(`${targetDate}T12:00:00Z`);
+  return Math.max(0, Math.round((target.getTime() - now.getTime()) / 86_400_000));
+}
+
 async function hasOpenTrade(marketRowId: string): Promise<boolean> {
   const db = getDb();
   const rows = await db
@@ -212,15 +289,26 @@ export async function runAnalysisOnce(): Promise<AnalyzeRunResult> {
       continue;
     }
     const forecasts = await recentForecasts(row.parsedLocationId);
+    const isDailyHigh = isHighestTempQuestion(row.question);
+    const dailyHighsC =
+      isDailyHigh && row.parsedTargetDate
+        ? await recentDailyHighs(row.parsedLocationId, row.parsedTargetDate)
+        : [];
     const edge = computeEdge({
       marketId: row.marketId,
       question: row.question,
       condition: row.parsedCondition,
       threshold: row.parsedThreshold,
+      thresholdHigh: row.parsedThresholdHigh,
       thresholdUnit: row.parsedThresholdUnit,
       endDate: row.endDate ?? new Date(),
       impliedProb: midpoint,
       forecasts,
+      isDailyHigh,
+      dailyHighsC,
+      ...(row.parsedTargetDate
+        ? { leadDays: leadDaysUntil(row.parsedTargetDate, new Date()) }
+        : {}),
     });
 
     const open = await hasOpenTrade(row.id);

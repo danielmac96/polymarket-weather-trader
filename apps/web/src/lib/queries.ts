@@ -1,7 +1,139 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull } from 'drizzle-orm';
 import { getDb, schema, type MarketSide, type TradeStatus } from '@pwa/shared';
 
 export const dynamic = 'force-dynamic';
+
+export interface FocusBucket {
+  rowId: string;
+  question: string;
+  label: string;
+  sortKey: number;
+  midpointYes: number | null;
+  modelProb: number | null;
+  edge: number | null;
+  decision: string | null;
+  priceAt: Date | null;
+}
+
+export interface FocusForecast {
+  provider: string;
+  tempMaxF: number;
+  forecastedAt: Date;
+}
+
+export interface FocusData {
+  locationName: string | null;
+  targetDate: string;
+  buckets: FocusBucket[];
+  forecasts: FocusForecast[];
+}
+
+function bucketLabel(
+  condition: string | null,
+  low: number | null,
+  high: number | null,
+  unit: string | null,
+): string {
+  const u = unit === 'C' ? '°C' : '°F';
+  if (low === null) return '—';
+  if (condition === 'TEMPERATURE_ABOVE') return `${low}${u} or higher`;
+  if (condition === 'TEMPERATURE_BELOW') return `${low}${u} or lower`;
+  if (high !== null && high !== low) return `${low}–${high}${u}`;
+  return `${low}${u}`;
+}
+
+/**
+ * The focused highest-temp market: all buckets of the soonest unresolved
+ * target date, plus the daily-max forecasts feeding the model.
+ */
+export async function getFocusData(): Promise<FocusData | null> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      rowId: schema.polymarketMarkets.id,
+      question: schema.polymarketMarkets.question,
+      condition: schema.polymarketMarkets.parsedCondition,
+      threshold: schema.polymarketMarkets.parsedThreshold,
+      thresholdHigh: schema.polymarketMarkets.parsedThresholdHigh,
+      thresholdUnit: schema.polymarketMarkets.parsedThresholdUnit,
+      targetDate: schema.polymarketMarkets.parsedTargetDate,
+      locationId: schema.polymarketMarkets.parsedLocationId,
+    })
+    .from(schema.polymarketMarkets)
+    .where(
+      and(
+        eq(schema.polymarketMarkets.status, 'ACTIVE'),
+        isNotNull(schema.polymarketMarkets.parsedTargetDate),
+      ),
+    );
+  if (rows.length === 0) return null;
+
+  const targetDate = rows
+    .map((r) => r.targetDate as string)
+    .sort()[0] as string;
+  const dayRows = rows.filter((r) => r.targetDate === targetDate);
+
+  const buckets: FocusBucket[] = [];
+  for (const r of dayRows) {
+    const price = await getLatestPriceFor(r.rowId, 'YES');
+    const analysis = await getLatestAnalysis(r.rowId);
+    // ABOVE buckets sort last, BELOW first, ranges by lower bound.
+    const sortKey =
+      r.threshold === null
+        ? Number.MAX_SAFE_INTEGER
+        : r.threshold + (r.condition === 'TEMPERATURE_ABOVE' ? 0.5 : 0) -
+          (r.condition === 'TEMPERATURE_BELOW' ? 0.5 : 0);
+    buckets.push({
+      rowId: r.rowId,
+      question: r.question,
+      label: bucketLabel(r.condition, r.threshold, r.thresholdHigh, r.thresholdUnit),
+      sortKey,
+      midpointYes: price?.midpoint ?? price?.price ?? null,
+      modelProb: analysis?.modelProb ?? null,
+      edge: analysis?.edge ?? null,
+      decision: analysis?.decision ?? null,
+      priceAt: price?.at ?? null,
+    });
+  }
+  buckets.sort((a, b) => a.sortKey - b.sortKey);
+
+  let locationName: string | null = null;
+  let forecasts: FocusForecast[] = [];
+  const locationId = dayRows.find((r) => r.locationId)?.locationId ?? null;
+  if (locationId) {
+    const loc = await db
+      .select({ name: schema.locations.name, state: schema.locations.state })
+      .from(schema.locations)
+      .where(eq(schema.locations.id, locationId))
+      .limit(1);
+    locationName = loc[0] ? `${loc[0].name}${loc[0].state ? `, ${loc[0].state}` : ''}` : null;
+
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const fRows = await db
+      .select({
+        provider: schema.dailyForecasts.provider,
+        tempMaxF: schema.dailyForecasts.tempMaxF,
+        forecastedAt: schema.dailyForecasts.forecastedAt,
+      })
+      .from(schema.dailyForecasts)
+      .where(
+        and(
+          eq(schema.dailyForecasts.locationId, locationId),
+          eq(schema.dailyForecasts.targetDate, targetDate),
+          gte(schema.dailyForecasts.forecastedAt, cutoff),
+        ),
+      )
+      .orderBy(desc(schema.dailyForecasts.forecastedAt));
+    const seen = new Set<string>();
+    forecasts = fRows.filter((f) => {
+      if (seen.has(f.provider)) return false;
+      seen.add(f.provider);
+      return true;
+    });
+  }
+
+  return { locationName, targetDate, buckets, forecasts };
+}
 
 export interface DashboardMarket {
   rowId: string;

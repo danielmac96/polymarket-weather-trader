@@ -37,7 +37,7 @@ function EquityChart({ series }: { series: Array<{ at: Date; totalEquityUsd: num
   const maxT = xs[xs.length - 1] ?? 1;
   const timeRange = maxT - minT || 1;
 
-  const points = series.map((s, i) => {
+  const points = series.map((s) => {
     const x = pad + ((s.at.getTime() - minT) / timeRange) * (w - 2 * pad);
     const y = h - pad - ((s.totalEquityUsd - minV) / valueRange) * (h - 2 * pad);
     return { x, y, v: s.totalEquityUsd, t: s.at };

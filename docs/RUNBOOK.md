@@ -4,6 +4,63 @@ Operational guide for `polymarket-weather-app`. Assumes you're inside a GitHub C
 
 ---
 
+## First stop: `pnpm doctor`
+
+One command that checks every pipeline stage in order (DB → migrations → seed → collector → discovery → prices → analyzer → portfolio → trades) and prints a pass/fail line with a fix hint for each:
+
+```
+$ pnpm doctor
+✓ database connection — PostgreSQL 16.4
+✓ migrations applied — all expected tables present
+✓ locations seeded — 10 locations
+✓ collector: daily-max forecasts — 24 rows, newest 12min ago
+✗ live-feed: price ticks — stale: newest row is 47min old (rows=1043)
+  hint: WebSocket down or no trading activity. Check live-feed logs.
+...
+```
+
+The first ✗ in the list is almost always the actual problem — every later stage depends on the ones above it.
+
+---
+
+## Focus mode (current strategy scope)
+
+The system targets **one market family**: the daily "Highest temperature in NYC" market on Polymarket (a ladder of mutually exclusive temperature buckets — `84°F or below`, `85°F`, `86-87°F`, `88°F or higher`, …).
+
+| Env var | Default | Meaning |
+| --- | --- | --- |
+| `FOCUS_ENABLED` | `true` | Restrict discovery to the focus family. `false` = all US weather markets. |
+| `FOCUS_QUERY` | `highest temperature` | Substring the question must contain. |
+| `FOCUS_LOCATION` | `NYC` | Location filter (`NYC` also matches "New York"). |
+
+To switch city: set `FOCUS_LOCATION=Chicago` (any seeded city) and restart. Discovery automatically closes markets that no longer match.
+
+### How the strategy works
+
+1. **Collector** stores each provider's forecast **daily-max** temperature per local calendar day (`daily_forecasts`).
+2. **Analyzer** parses each bucket (`≤84`, `85`, `86-87`, `≥88`), models Tmax as Normal(provider mean, σ) where σ grows with lead time, applies a ±0.5° rounding correction, and compares model probability vs the market price.
+3. **Decision gate**: edge > `EDGE_THRESHOLD`, volume/liquidity floors, confidence > 0.4 (confidence comes from provider agreement and count).
+4. **Sizing**: fractional Kelly (`KELLY_FRACTION`, default 0.25 = quarter-Kelly) on current equity, clamped by `MAX_POSITION_PCT` (10% per position), `MAX_TOTAL_EXPOSURE_PCT` (60% total open), and `MAX_PAPER_POSITION_USD`.
+
+### Strategy data to watch
+
+```sql
+-- Today's ladder: model vs market per bucket
+SELECT m.question, a.implied_prob, a.model_prob, a.edge, a.confidence, a.decision
+FROM market_analysis a
+JOIN polymarket_markets m ON m.id = a.market_id
+WHERE m.status = 'ACTIVE'
+  AND a.analyzed_at > now() - interval '15 minutes'
+ORDER BY m.parsed_threshold;
+
+-- Daily-max forecasts feeding the model
+SELECT provider, target_date, temp_max_f, forecasted_at
+FROM daily_forecasts
+ORDER BY forecasted_at DESC LIMIT 10;
+```
+
+---
+
 ## Daily loop
 
 ```
@@ -143,7 +200,7 @@ SELECT MAX(at) FROM market_prices;
 
 All knobs read from env vars at process start. To change them in Codespaces:
 1. **Settings → Secrets and variables → Codespaces**
-2. Update `EDGE_THRESHOLD`, `MAX_PAPER_POSITION_USD`, `PAPER_STARTING_BANKROLL_USD`, `AUTO_PAPER_TRADE`, `MIN_MARKET_VOLUME_USD`, `MIN_MARKET_LIQUIDITY_USD`
+2. Update `EDGE_THRESHOLD`, `KELLY_FRACTION`, `MAX_POSITION_PCT`, `MAX_TOTAL_EXPOSURE_PCT`, `MAX_PAPER_POSITION_USD`, `PAPER_STARTING_BANKROLL_USD`, `AUTO_PAPER_TRADE`, `MIN_MARKET_VOLUME_USD`, `MIN_MARKET_LIQUIDITY_USD`, `FOCUS_ENABLED`, `FOCUS_QUERY`, `FOCUS_LOCATION`
 3. Restart: `bash scripts/update.sh`
 
 `LIVE_TRADING_ENABLED` is hard-coded false for this MVP. The shared config refuses to start if it's true.
@@ -195,9 +252,14 @@ pnpm --filter @pwa/portfolio start --once
 
 ## Troubleshooting
 
+Run `pnpm doctor` first — it pinpoints the broken stage. Then:
+
 | Symptom | First thing to check |
 | --- | --- |
 | Dashboard 500 | `tail -50 /tmp/app.log` — usually a DB env var or migration drift. Run `pnpm db:migrate`. |
+| Focus panel says "no daily-max forecasts" | Collector hasn't run or weather APIs blocked. `pnpm --filter @pwa/collector start` and check logs. |
+| No focus markets discovered | Polymarket may not have today's market up yet, or `FOCUS_QUERY`/`FOCUS_LOCATION` don't match the question wording. Set `FOCUS_ENABLED=false` temporarily and inspect what discovery finds. |
+| Trades skipped with "kelly sizing declined" | Working as intended: model edge at the entry price isn't positive, or exposure caps are full. |
 | Empty dashboard, no active markets | Did the live-feed start? `pnpm --filter @pwa/live-feed start &` and watch logs. |
 | Trades not auto-opening | `AUTO_PAPER_TRADE=true`? Check edge threshold isn't set too high. |
 | Footer pill stays red | The WebSocket can't reach Polymarket — check egress in your network policy. |
