@@ -15,6 +15,13 @@
       "when": 1781147845588,
       "tag": "0001_blue_karen_page",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783742085034,
+      "tag": "0002_daffy_venus",
+      "breakpoints": true
     }
   ]
 }

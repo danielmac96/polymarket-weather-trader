@@ -2,6 +2,7 @@ import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import {
   createLogger,
   getDb,
+  getTradingSettings,
   loadConfig,
   schema,
   type Forecast,
@@ -261,9 +262,19 @@ export interface AnalyzeRunResult {
 
 export async function runAnalysisOnce(): Promise<AnalyzeRunResult> {
   const cfg = loadConfig();
+  // Live user controls: unit size + risk tolerance → thresholds and sizing.
+  const settings = await getTradingSettings();
   const startedAt = Date.now();
   const rows = await fetchActiveMarkets();
-  log.info({ count: rows.length }, 'starting analysis');
+  log.info(
+    {
+      count: rows.length,
+      unitSizeUsd: settings.unitSizeUsd,
+      riskTolerance: settings.riskTolerance,
+      autoTradeEnabled: settings.autoTradeEnabled,
+    },
+    'starting analysis',
+  );
 
   let trade = 0;
   let watch = 0;
@@ -319,10 +330,10 @@ export async function runAnalysisOnce(): Promise<AnalyzeRunResult> {
       liquidity,
       endDate: row.endDate,
       hasOpenTrade: open,
-      edgeThreshold: cfg.EDGE_THRESHOLD,
+      edgeThreshold: settings.profile.edgeThreshold,
       minVolumeUsd: cfg.MIN_MARKET_VOLUME_USD,
       minLiquidityUsd: cfg.MIN_MARKET_LIQUIDITY_USD,
-      minConfidence: 0.4,
+      minConfidence: settings.profile.minConfidence,
       now: new Date(),
     });
 
@@ -348,6 +359,7 @@ export async function runAnalysisOnce(): Promise<AnalyzeRunResult> {
         analysisId,
         edge,
         midpoint,
+        settings,
       });
       if (tradeId) tradesOpened++;
     } else if (decision === 'WATCH') {

@@ -17,7 +17,8 @@
     "db:migrate": "pnpm --filter @pwa/db migrate",
     "db:seed": "pnpm --filter @pwa/db seed",
     "db:generate": "pnpm --filter @pwa/db generate",
-    "db:studio": "pnpm --filter @pwa/db studio"
+    "db:studio": "pnpm --filter @pwa/db studio",
+    "db:seed:demo": "pnpm --filter @pwa/db seed:demo"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

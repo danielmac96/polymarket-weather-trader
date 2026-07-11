@@ -106,7 +106,7 @@ const CHECKS: Check[] = [
   },
   {
     name: 'trading activity',
-    hint: 'Informational — no trades is normal until an edge clears EDGE_THRESHOLD.',
+    hint: "Informational — no trades is normal until an edge clears the risk profile's edge threshold.",
     run: async (c) => {
       const r = await c.query<{ open: string; closed: string; pnl: string | null }>(
         `select

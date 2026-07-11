@@ -5,6 +5,7 @@ import {
   loadConfig,
   schema,
   type MarketSide,
+  type TradingSettings,
 } from '@pwa/shared';
 import type { EdgeResult } from './edge.js';
 import { computeKellySize } from './sizing.js';
@@ -16,6 +17,8 @@ export interface PaperTradeInput {
   analysisId: string | null;
   edge: EdgeResult;
   midpoint: number;
+  /** Live user settings (unit size + risk profile) for this cycle. */
+  settings: TradingSettings;
 }
 
 /** Current free cash and open cost basis derived from the trade ledger. */
@@ -44,8 +47,9 @@ async function getBankroll(): Promise<{ cashUsd: number; openExposureUsd: number
 
 export async function maybeAutoTrade(input: PaperTradeInput): Promise<string | null> {
   const cfg = loadConfig();
-  if (!cfg.AUTO_PAPER_TRADE) {
-    log.debug({ marketRowId: input.marketRowId }, 'AUTO_PAPER_TRADE off');
+  // Env flag is a hard kill switch; the DB setting is the user's live toggle.
+  if (!cfg.AUTO_PAPER_TRADE || !input.settings.autoTradeEnabled) {
+    log.debug({ marketRowId: input.marketRowId }, 'auto trading disabled');
     return null;
   }
 
@@ -80,16 +84,19 @@ export async function maybeAutoTrade(input: PaperTradeInput): Promise<string | n
   }
 
   const { cashUsd, openExposureUsd } = await getBankroll();
+  const { profile, unitSizeUsd } = input.settings;
   const sized = computeKellySize({
     modelProbYes: input.edge.modelProb,
     side,
     entryPrice,
     cashUsd,
     openExposureUsd,
-    kellyFraction: cfg.KELLY_FRACTION,
-    maxPositionPct: cfg.MAX_POSITION_PCT,
-    maxTotalExposurePct: cfg.MAX_TOTAL_EXPOSURE_PCT,
+    kellyFraction: profile.kellyFraction,
+    maxPositionPct: profile.maxPositionPct,
+    maxTotalExposurePct: profile.maxTotalExposurePct,
     maxPositionUsd: cfg.MAX_PAPER_POSITION_USD,
+    unitSizeUsd,
+    maxUnitsPerTrade: profile.maxUnitsPerTrade,
   });
   if (sized.sizeUsd <= 0) {
     log.info(

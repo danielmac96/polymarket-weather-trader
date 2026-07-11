@@ -23,12 +23,10 @@ describe('loadConfig', () => {
     process.env.DATABASE_URL = 'postgresql://x:y@localhost:5432/z';
     delete process.env.LIVE_TRADING_ENABLED;
     delete process.env.AUTO_PAPER_TRADE;
-    delete process.env.EDGE_THRESHOLD;
     delete process.env.LOG_LEVEL;
     const cfg = loadConfig();
     expect(cfg.DATABASE_URL).toBe('postgresql://x:y@localhost:5432/z');
     expect(cfg.LOG_LEVEL).toBe('info');
-    expect(cfg.EDGE_THRESHOLD).toBe(0.05);
     expect(cfg.AUTO_PAPER_TRADE).toBe(true);
     expect(cfg.LIVE_TRADING_ENABLED).toBe(false);
     expect(cfg.MAX_PAPER_POSITION_USD).toBe(100);
@@ -36,17 +34,12 @@ describe('loadConfig', () => {
     expect(cfg.FOCUS_ENABLED).toBe(true);
     expect(cfg.FOCUS_QUERY).toBe('highest temperature');
     expect(cfg.FOCUS_LOCATION).toBe('NYC');
-    expect(cfg.KELLY_FRACTION).toBe(0.25);
-    expect(cfg.MAX_POSITION_PCT).toBe(0.1);
-    expect(cfg.MAX_TOTAL_EXPOSURE_PCT).toBe(0.6);
   });
 
   it('coerces numeric strings', () => {
     process.env.DATABASE_URL = 'postgresql://x:y@localhost:5432/z';
-    process.env.EDGE_THRESHOLD = '0.1';
     process.env.MAX_PAPER_POSITION_USD = '25';
     const cfg = loadConfig();
-    expect(cfg.EDGE_THRESHOLD).toBe(0.1);
     expect(cfg.MAX_PAPER_POSITION_USD).toBe(25);
   });
 

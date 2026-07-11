@@ -24,7 +24,6 @@ const schema = z.object({
     .string()
     .default('polymarket-weather-app/0.1 (contact@example.com)'),
 
-  EDGE_THRESHOLD: numberString.default('0.05'),
   MIN_MARKET_VOLUME_USD: numberString.default('500'),
   MIN_MARKET_LIQUIDITY_USD: numberString.default('200'),
 
@@ -35,12 +34,10 @@ const schema = z.object({
   FOCUS_LOCATION: z.string().default('NYC'),
 
   PAPER_STARTING_BANKROLL_USD: numberString.default('1000'),
+  // Absolute per-position backstop. Growth sizing (Kelly fraction, caps,
+  // edge threshold) now lives in the DB-backed trading settings — set unit
+  // size and risk tolerance from the dashboard's Settings page.
   MAX_PAPER_POSITION_USD: numberString.default('100'),
-
-  // Growth sizing: fractional Kelly with per-position and total-exposure caps.
-  KELLY_FRACTION: numberString.default('0.25'),
-  MAX_POSITION_PCT: numberString.default('0.10'),
-  MAX_TOTAL_EXPOSURE_PCT: numberString.default('0.60'),
 
   AUTO_PAPER_TRADE: booleanString.default('true'),
   LIVE_TRADING_ENABLED: booleanString.default('false'),
