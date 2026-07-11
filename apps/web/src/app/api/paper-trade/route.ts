@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { and, desc, eq } from 'drizzle-orm';
-import { getDb, loadConfig, schema, type MarketSide } from '@pwa/shared';
+import { getDb, getTradingSettings, schema, type MarketSide } from '@pwa/shared';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'invalid body' }, { status: 400 });
   }
   const { marketId, side } = parsed.data;
-  const cfg = loadConfig();
+  const settings = await getTradingSettings();
   const db = getDb();
 
   // marketId here is the Postgres row id (uuid) we use throughout the UI.
@@ -52,7 +52,8 @@ export async function POST(req: Request) {
   if (entryPrice <= 0 || entryPrice >= 1) {
     return NextResponse.json({ error: 'invalid entry price' }, { status: 400 });
   }
-  const sizeUsd = cfg.MAX_PAPER_POSITION_USD;
+  // Manual dashboard trades are always exactly one unit.
+  const sizeUsd = settings.unitSizeUsd;
   const sharesQty = sizeUsd / entryPrice;
 
   const inserted = await db

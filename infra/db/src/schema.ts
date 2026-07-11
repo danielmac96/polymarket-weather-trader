@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   date,
   doublePrecision,
   index,
@@ -41,6 +42,24 @@ export const tradeStatusEnum = pgEnum('trade_status', [
 ]);
 
 export const tradeSourceEnum = pgEnum('trade_source', ['AUTO', 'MANUAL']);
+
+export const riskToleranceEnum = pgEnum('risk_tolerance', ['LOW', 'MEDIUM', 'HIGH']);
+
+/**
+ * Single-row table holding the user's live trading controls. The analyzer
+ * re-reads this every cycle, so changes from the dashboard take effect
+ * without restarting any service. `id` is always 1.
+ */
+export const tradingSettings = pgTable('trading_settings', {
+  id: integer('id').primaryKey().default(1),
+  /** Base bet size in USD; positions are placed in multiples of this unit. */
+  unitSizeUsd: doublePrecision('unit_size_usd').notNull().default(10),
+  riskTolerance: riskToleranceEnum('risk_tolerance').notNull().default('MEDIUM'),
+  autoTradeEnabled: boolean('auto_trade_enabled').notNull().default(true),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const locations = pgTable(
   'locations',

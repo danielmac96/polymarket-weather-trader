@@ -12,6 +12,8 @@ function base(overrides: Partial<SizeInput> = {}): SizeInput {
     maxPositionPct: 0.1,
     maxTotalExposurePct: 0.6,
     maxPositionUsd: 100,
+    unitSizeUsd: 10,
+    maxUnitsPerTrade: 100,
     ...overrides,
   };
 }
@@ -22,6 +24,7 @@ describe('computeKellySize', () => {
     const r = computeKellySize(base());
     expect(r.kellyFull).toBeCloseTo(0.2, 5);
     expect(r.sizeUsd).toBeCloseTo(50, 5);
+    expect(r.units).toBe(5);
   });
 
   it('declines when the model agrees with the market', () => {
@@ -58,12 +61,16 @@ describe('computeKellySize', () => {
     // Equity 1000 (400 cash + 600 open), cap 60% → no room left.
     const r = computeKellySize(base({ cashUsd: 400, openExposureUsd: 600 }));
     expect(r.sizeUsd).toBe(0);
-    expect(r.reason).toContain('minimum');
   });
 
   it('never bets more than available cash', () => {
     const r = computeKellySize(
-      base({ modelProbYes: 0.95, cashUsd: 20, openExposureUsd: 980, maxPositionUsd: 500 }),
+      base({
+        modelProbYes: 0.95,
+        cashUsd: 20,
+        openExposureUsd: 980,
+        maxPositionUsd: 500,
+      }),
     );
     expect(r.sizeUsd).toBeLessThanOrEqual(20);
   });
@@ -71,5 +78,32 @@ describe('computeKellySize', () => {
   it('rejects degenerate entry prices', () => {
     expect(computeKellySize(base({ entryPrice: 0 })).sizeUsd).toBe(0);
     expect(computeKellySize(base({ entryPrice: 1 })).sizeUsd).toBe(0);
+  });
+
+  it('quantizes the stake to whole units, flooring toward safety', () => {
+    // Kelly target $50 with $15 units → 3 units = $45, never $60.
+    const r = computeKellySize(base({ unitSizeUsd: 15 }));
+    expect(r.units).toBe(3);
+    expect(r.sizeUsd).toBe(45);
+  });
+
+  it('declines when the Kelly stake is below one unit', () => {
+    // Kelly target $50 < $60 unit → no trade rather than over-betting.
+    const r = computeKellySize(base({ unitSizeUsd: 60 }));
+    expect(r.sizeUsd).toBe(0);
+    expect(r.units).toBe(0);
+    expect(r.reason).toContain('below one unit');
+  });
+
+  it('caps units at maxUnitsPerTrade', () => {
+    // Kelly target $50 with $10 units → 5 units, but profile allows 2.
+    const r = computeKellySize(base({ maxUnitsPerTrade: 2 }));
+    expect(r.units).toBe(2);
+    expect(r.sizeUsd).toBe(20);
+  });
+
+  it('rejects an invalid unit size', () => {
+    expect(computeKellySize(base({ unitSizeUsd: 0 })).sizeUsd).toBe(0);
+    expect(computeKellySize(base({ unitSizeUsd: -5 })).sizeUsd).toBe(0);
   });
 });

@@ -5,9 +5,10 @@ import type { MarketSide } from '@pwa/shared';
  *
  * For a binary share bought at price c with believed win probability p, the
  * full-Kelly bankroll fraction is (p − c) / (1 − c). Full Kelly maximizes
- * long-run growth but assumes p is exactly right; we bet KELLY_FRACTION of it
- * (default 25%) to keep drawdowns survivable when the model is miscalibrated,
- * then clamp by per-position and total-exposure caps.
+ * long-run growth but assumes p is exactly right; we bet the risk profile's
+ * kellyFraction of it to keep drawdowns survivable when the model is
+ * miscalibrated, clamp by per-position and total-exposure caps, then
+ * quantize to whole multiples of the user's unit size.
  */
 
 export interface SizeInput {
@@ -27,10 +28,15 @@ export interface SizeInput {
   maxTotalExposurePct: number;
   /** Absolute per-position backstop in USD. */
   maxPositionUsd: number;
+  /** User's base bet; final size is a whole multiple of this. */
+  unitSizeUsd: number;
+  /** Max units in a single position (from the risk profile). */
+  maxUnitsPerTrade: number;
 }
 
 export interface SizeResult {
   sizeUsd: number;
+  units: number;
   kellyFull: number;
   reason: string;
 }
@@ -41,17 +47,20 @@ export function computeKellySize(i: SizeInput): SizeResult {
   const pWin = i.side === 'YES' ? i.modelProbYes : 1 - i.modelProbYes;
   const c = i.entryPrice;
   if (c <= 0 || c >= 1) {
-    return { sizeUsd: 0, kellyFull: 0, reason: 'invalid entry price' };
+    return { sizeUsd: 0, units: 0, kellyFull: 0, reason: 'invalid entry price' };
+  }
+  if (!Number.isFinite(i.unitSizeUsd) || i.unitSizeUsd <= 0) {
+    return { sizeUsd: 0, units: 0, kellyFull: 0, reason: 'invalid unit size' };
   }
 
   const kellyFull = (pWin - c) / (1 - c);
   if (kellyFull <= 0) {
-    return { sizeUsd: 0, kellyFull, reason: 'no positive edge at entry price' };
+    return { sizeUsd: 0, units: 0, kellyFull, reason: 'no positive edge at entry price' };
   }
 
   const equity = i.cashUsd + i.openExposureUsd;
   if (equity <= 0) {
-    return { sizeUsd: 0, kellyFull, reason: 'no equity' };
+    return { sizeUsd: 0, units: 0, kellyFull, reason: 'no equity' };
   }
 
   const fraction = Math.min(kellyFull * i.kellyFraction, i.maxPositionPct);
@@ -73,8 +82,23 @@ export function computeKellySize(i: SizeInput): SizeResult {
     reason += ' (cash limit)';
   }
 
-  if (size < MIN_TRADE_USD) {
-    return { sizeUsd: 0, kellyFull, reason: 'size below minimum after caps' };
+  // Quantize to whole units of the user's base bet. Flooring keeps the final
+  // stake at or below the Kelly-derived target — never over-bets the model.
+  // The epsilon absorbs float noise (e.g. 49.999999999 / 10 must be 5 units).
+  const units = Math.min(Math.floor(size / i.unitSizeUsd + 1e-9), i.maxUnitsPerTrade);
+  if (units < 1) {
+    return {
+      sizeUsd: 0,
+      units: 0,
+      kellyFull,
+      reason: `stake $${size.toFixed(2)} below one unit ($${i.unitSizeUsd})`,
+    };
   }
-  return { sizeUsd: size, kellyFull, reason };
+  size = units * i.unitSizeUsd;
+  reason += ` → ${units} unit${units === 1 ? '' : 's'} × $${i.unitSizeUsd}`;
+
+  if (size < MIN_TRADE_USD) {
+    return { sizeUsd: 0, units: 0, kellyFull, reason: 'size below minimum after caps' };
+  }
+  return { sizeUsd: size, units, kellyFull, reason };
 }

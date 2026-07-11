@@ -12,10 +12,33 @@ How it trades:
 
 1. **Forecast** — NOAA and Open-Meteo daily-max temperature forecasts for the target day are collected continuously (`daily_forecasts` table).
 2. **Model** — the daily high is modeled as Normal(provider consensus, σ), with σ widening for provider disagreement and lead time, and a ±0.5°F correction because buckets resolve on rounded whole degrees. Each bucket gets a model probability.
-3. **Edge** — model probability vs live market price (WebSocket midpoint). Beyond `EDGE_THRESHOLD` (default 5%) with adequate volume, liquidity, and confidence, the decision is TRADE.
-4. **Size for growth** — fractional Kelly (default quarter-Kelly) on current equity, capped at 10% per position and 60% total open exposure. Winners compound the bankroll; sizing scales automatically as equity grows.
+3. **Edge** — model probability vs live market price (WebSocket midpoint). Beyond the risk profile's edge threshold with adequate volume, liquidity, and confidence, the decision is TRADE.
+4. **Size for growth** — fractional Kelly on current equity, quantized to whole multiples of your unit size and clamped by the risk profile's per-position and total-exposure caps. Winners compound the bankroll; sizing scales automatically as equity grows.
 
-The dashboard's top panel shows the focused market's full bucket ladder: market price vs model probability vs edge, plus the provider forecasts feeding it. Configure with `FOCUS_*`, `KELLY_*` env vars (see `.env.example`). `FOCUS_ENABLED=false` reverts to tracking all US weather markets.
+The dashboard's top panel shows the focused market's full bucket ladder: market price vs model probability vs edge, plus the provider forecasts feeding it. `FOCUS_ENABLED=false` reverts to tracking all US weather markets.
+
+## Hands-off trading: unit size + risk tolerance
+
+You configure exactly two things on the dashboard's **Settings** page (stored in the `trading_settings` table, picked up by the analyzer on its next cycle — no restart):
+
+- **Unit size (USD)** — your base bet. Every position is a whole number of units; the engine floors the Kelly stake to units so it never over-bets the model.
+- **Risk tolerance** — LOW / MEDIUM / HIGH. Each maps to a risk profile:
+
+| Profile | Kelly fraction | Min edge | Max/position | Max exposure | Max units/trade | Min confidence |
+| ------- | -------------- | -------- | ------------ | ------------ | --------------- | -------------- |
+| LOW     | 0.15           | 8%       | 5% equity    | 30% equity   | 2               | 55%            |
+| MEDIUM  | 0.25           | 5%       | 10% equity   | 60% equity   | 5               | 40%            |
+| HIGH    | 0.50           | 4%       | 20% equity   | 80% equity   | 10              | 30%            |
+
+The Settings page also has an **auto trading** toggle (the `AUTO_PAPER_TRADE` env var remains a hard kill switch on top of it).
+
+## Demo mode (no network / no market hours)
+
+```bash
+pnpm db:seed:demo
+```
+
+Seeds a synthetic mispriced "Highest temperature in NYC" bucket ladder for tomorrow plus provider forecasts (all market ids prefixed `demo-`), so the full loop — analyzer → auto paper trades → portfolio → dashboard — runs without reaching NOAA/Open-Meteo/Polymarket. Re-running wipes and re-creates the demo rows. Useful for testing in restricted-network environments; live data requires outbound access to `api.weather.gov`, `api.open-meteo.com`, `gamma-api.polymarket.com`, `clob.polymarket.com`, and `wss://ws-subscriptions-clob.polymarket.com`.
 
 ## Troubleshooting
 
@@ -64,10 +87,11 @@ Set at: repo Settings → Secrets and variables → Codespaces.
 | Secret                          | Required | Notes                                                              |
 | ------------------------------- | -------- | ------------------------------------------------------------------ |
 | `NOAA_USER_AGENT`               | Yes      | `app-name/version (email)` — NOAA requires identification          |
-| `EDGE_THRESHOLD`                | No       | Override default `0.05`                                            |
-| `MAX_PAPER_POSITION_USD`        | No       | Override default `50`                                              |
+| `MAX_PAPER_POSITION_USD`        | No       | Absolute per-position backstop, default `100`                      |
 | `PAPER_STARTING_BANKROLL_USD`   | No       | Override default `1000`                                            |
-| `AUTO_PAPER_TRADE`              | No       | Override default `true`                                            |
+| `AUTO_PAPER_TRADE`              | No       | Hard kill switch, default `true`                                   |
+
+Unit size, risk tolerance, and the auto-trading toggle are configured on the dashboard's **Settings** page, not via secrets.
 
 No Polymarket credentials — Gamma REST and CLOB WebSocket are unauthenticated.
 
@@ -103,6 +127,7 @@ scripts/update.sh
 | `pnpm test`            | Run all package tests                            |
 | `pnpm db:migrate`      | Apply pending migrations                         |
 | `pnpm db:seed`         | Seed US locations                                |
+| `pnpm db:seed:demo`    | Seed synthetic focus market for offline testing  |
 | `pnpm db:generate`     | Generate new migration from schema diff          |
 | `pnpm db:studio`       | Open Drizzle Studio                              |
 | `bash scripts/update.sh` | Pull, install, migrate, restart services       |
